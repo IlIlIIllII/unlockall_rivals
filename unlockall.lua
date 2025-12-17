@@ -288,4 +288,11 @@ if ClientEntity and ClientEntity.ReplicateFromServer then
     end
 end
 loadConfig()
-queue_on_teleport(game:HttpGet("https://raw.githubusercontent.com/IlIlIIllII/unlockall_rivals/refs/heads/main/unlockall.lua"))
+if queue_on_teleport then
+    pcall(function()
+        queue_on_teleport([[
+            task.wait(1)
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/IlIlIIllII/unlockall_rivals/refs/heads/main/unlockall.lua"))()
+        ]])
+    end)
+end
