@@ -18,7 +18,7 @@ local playerScripts = player.PlayerScripts
 local controllers = playerScripts.Controllers
 local EnumLibrary = require(ReplicatedStorage.Modules:WaitForChild("EnumLibrary", 10))
 if EnumLibrary then EnumLibrary:WaitForEnumBuilder() end
-task.wait(10)
+task.wait(3)
 local CosmeticLibrary = require(ReplicatedStorage.Modules:WaitForChild("CosmeticLibrary", 10))
 local ItemLibrary = require(ReplicatedStorage.Modules:WaitForChild("ItemLibrary", 10))
 local DataController = require(controllers:WaitForChild("PlayerDataController", 10))
