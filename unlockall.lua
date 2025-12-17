@@ -1,6 +1,7 @@
 -- works on all normal executors except solara, xeno
 
 -- bypass ac
+task.wait(0.5)
 pcall(function()
     local replicatedFirst = game:GetService("ReplicatedFirst")
     for _, child in pairs(replicatedFirst:GetChildren()) do
