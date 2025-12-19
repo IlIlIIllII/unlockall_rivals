@@ -1,6 +1,3 @@
--- works on all normal executors except solara, xeno
-
--- bypass ac
 task.wait(0.5)
 pcall(function()
     local replicatedFirst = game:GetService("ReplicatedFirst")
@@ -10,6 +7,9 @@ pcall(function()
     local analytics = replicatedFirst:FindFirstChild("AnalyticsPipelineController")
     if analytics then analytics:Destroy() end
 end)
+
+if getgenv().UnlockAllLoaded then return end
+getgenv().UnlockAllLoaded = true
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -23,9 +23,13 @@ task.wait(3)
 local CosmeticLibrary = require(ReplicatedStorage.Modules:WaitForChild("CosmeticLibrary", 10))
 local ItemLibrary = require(ReplicatedStorage.Modules:WaitForChild("ItemLibrary", 10))
 local DataController = require(controllers:WaitForChild("PlayerDataController", 10))
+repeat task.wait() until CosmeticLibrary.Cosmetics
 local equipped, favorites = {}, {}
 local constructingWeapon, viewingProfile = nil, nil
 local lastUsedWeapon = nil
+local isReplicating = false
+local lastSaveTime = 0
+local cachedInventoryProxy = nil
 local function cloneCosmetic(name, cosmeticType, options)
     local base = CosmeticLibrary.Cosmetics[name]
     if not base then return nil end
@@ -46,7 +50,8 @@ local function cloneCosmetic(name, cosmeticType, options)
 end
 local saveFile = "unlockall/config.json"
 local function saveConfig()
-    if not writefile then return end
+    if not writefile or tick() - lastSaveTime < 1 then return end
+    lastSaveTime = tick()
     pcall(function()
         local config = {equipped = {}, favorites = favorites}
         for weapon, cosmetics in pairs(equipped) do
@@ -91,9 +96,10 @@ local originalGet = DataController.Get
 DataController.Get = function(self, key)
     local data = originalGet(self, key)
     if key == "CosmeticInventory" then
-        local proxy = {}
-        if data then for k, v in pairs(data) do proxy[k] = v end end
-        return setmetatable(proxy, {__index = function() return true end})
+        if not cachedInventoryProxy then
+            cachedInventoryProxy = setmetatable({}, {__index = function() return true end})
+        end
+        return cachedInventoryProxy
     end
     if key == "FavoritedCosmetics" then
         local result = data and table.clone(data) or {}
@@ -129,7 +135,7 @@ if hookmetamethod then
     local useItemRemote = fighterRemotes and fighterRemotes:FindFirstChild("UseItem")
     if equipRemote then
         local oldNamecall
-        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
             if getnamecallmethod() ~= "FireServer" then return oldNamecall(self, ...) end
             local args = {...}
             if useItemRemote and self == useItemRemote then
@@ -151,7 +157,7 @@ if hookmetamethod then
             if self == equipRemote then
                 local weaponName, cosmeticType, cosmeticName, options = args[1], args[2], args[3], args[4] or {}                
                 if cosmeticName and cosmeticName ~= "None" and cosmeticName ~= "" then
-                    local inventory = DataController:Get("CosmeticInventory")
+                    local inventory = originalGet(DataController, "CosmeticInventory")
                     if inventory and rawget(inventory, cosmeticName) then return oldNamecall(self, ...) end
                 end                
                 equipped[weaponName] = equipped[weaponName] or {}                
@@ -163,8 +169,11 @@ if hookmetamethod then
                     if cloned then equipped[weaponName][cosmeticType] = cloned end
                 end                
                 task.defer(function()
+                    if isReplicating then return end
+                    isReplicating = true
                     pcall(function() DataController.CurrentData:Replicate("WeaponInventory") end)
-                    task.wait(0.2)
+                    task.wait(0.5)
+                    isReplicating = false
                     saveConfig()
                 end)
                 return
@@ -177,7 +186,7 @@ if hookmetamethod then
                 return
             end            
             return oldNamecall(self, ...)
-        end)
+        end))
     end
 end
 local ClientItem
@@ -282,7 +291,7 @@ if ClientEntity and ClientEntity.ReplicateFromServer then
                 end                
                 if finisherEnum then
                     args[1] = finisherEnum
-                    return originalReplicateFromServer(self, action, unpack(args))
+                    return originalReplicateFromServer(self, action, table.unpack(args))
                 end
             end
         end        
