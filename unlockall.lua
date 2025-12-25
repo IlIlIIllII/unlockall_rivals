@@ -19,7 +19,6 @@ pcall(function()
     if analytics then analytics:Destroy() end
 end)
 
-task.wait(3)
 local CosmeticLibrary = require(ReplicatedStorage.Modules:WaitForChild("CosmeticLibrary", 10))
 local ItemLibrary = require(ReplicatedStorage.Modules:WaitForChild("ItemLibrary", 10))
 local DataController = require(controllers:WaitForChild("PlayerDataController", 10))
