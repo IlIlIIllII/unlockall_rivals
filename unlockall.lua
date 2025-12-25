@@ -288,7 +288,8 @@ if ClientEntity and ClientEntity.ReplicateFromServer then
                     if ok and result then finisherEnum = result end
                 end
                 if finisherEnum then
-                    return originalReplicateFromServer(self, action, finisherEnum, args[2], args[3], args[4])
+                    args[1] = finisherEnum
+                    return originalReplicateFromServer(self, action, table.unpack(args))
                 end
             end
         end
