@@ -1,12 +1,3 @@
-task.wait(0.5)
-pcall(function()
-    local replicatedFirst = game:GetService("ReplicatedFirst")
-    for _, child in pairs(replicatedFirst:GetChildren()) do
-        if child:IsA("LocalScript") then child.Enabled = false child:Destroy() end
-    end
-    local analytics = replicatedFirst:FindFirstChild("AnalyticsPipelineController")
-    if analytics then analytics:Destroy() end
-end)
 
 if getgenv().UnlockAllLoaded then return end
 getgenv().UnlockAllLoaded = true
@@ -19,6 +10,15 @@ local playerScripts = player.PlayerScripts
 local controllers = playerScripts.Controllers
 local EnumLibrary = require(ReplicatedStorage.Modules:WaitForChild("EnumLibrary", 10))
 if EnumLibrary then EnumLibrary:WaitForEnumBuilder() end
+pcall(function()
+    local replicatedFirst = game:GetService("ReplicatedFirst")
+    for _, child in pairs(replicatedFirst:GetChildren()) do
+        if child:IsA("LocalScript") then child.Enabled = false child:Destroy() end
+    end
+    local analytics = replicatedFirst:FindFirstChild("AnalyticsPipelineController")
+    if analytics then analytics:Destroy() end
+end)
+
 task.wait(3)
 local CosmeticLibrary = require(ReplicatedStorage.Modules:WaitForChild("CosmeticLibrary", 10))
 local ItemLibrary = require(ReplicatedStorage.Modules:WaitForChild("ItemLibrary", 10))
