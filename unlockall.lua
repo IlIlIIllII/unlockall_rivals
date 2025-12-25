@@ -1,4 +1,3 @@
-
 if getgenv().UnlockAllLoaded then return end
 getgenv().UnlockAllLoaded = true
 
@@ -13,7 +12,7 @@ if EnumLibrary then EnumLibrary:WaitForEnumBuilder() end
 pcall(function()
     local replicatedFirst = game:GetService("ReplicatedFirst")
     for _, child in pairs(replicatedFirst:GetChildren()) do
-        if child:IsA("LocalScript") then child.Enabled = false child:Destroy() end
+        if child:IsA("LocalScript") and child.Name ~= "LoadingScreen" then child.Enabled = false child:Destroy() end
     end
     local analytics = replicatedFirst:FindFirstChild("AnalyticsPipelineController")
     if analytics then analytics:Destroy() end
@@ -274,26 +273,25 @@ if ClientEntity and ClientEntity.ReplicateFromServer then
     ClientEntity.ReplicateFromServer = function(self, action, ...)
         if action == "FinisherEffect" then
             local args = {...}
-            local killerName = args[3]            
+            local killerName = args[3]
             local decodedKiller = killerName
             if type(killerName) == "userdata" and EnumLibrary and EnumLibrary.FromEnum then
                 local ok, decoded = pcall(EnumLibrary.FromEnum, EnumLibrary, killerName)
                 if ok and decoded then decodedKiller = decoded end
-            end            
-            local isOurKill = tostring(decodedKiller) == player.Name or tostring(decodedKiller):lower() == player.Name:lower()            
+            end
+            local isOurKill = tostring(decodedKiller) == player.Name or tostring(decodedKiller):lower() == player.Name:lower()
             if isOurKill and lastUsedWeapon and equipped[lastUsedWeapon] and equipped[lastUsedWeapon].Finisher then
                 local finisherData = equipped[lastUsedWeapon].Finisher
-                local finisherEnum = finisherData.Enum                
+                local finisherEnum = finisherData.Enum
                 if not finisherEnum and EnumLibrary then
                     local ok, result = pcall(EnumLibrary.ToEnum, EnumLibrary, finisherData.Name)
                     if ok and result then finisherEnum = result end
-                end                
+                end
                 if finisherEnum then
-                    args[1] = finisherEnum
-                    return originalReplicateFromServer(self, action, table.unpack(args))
+                    return originalReplicateFromServer(self, action, finisherEnum, args[2], args[3], args[4])
                 end
             end
-        end        
+        end
         return originalReplicateFromServer(self, action, ...)
     end
 end
