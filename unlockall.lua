@@ -10,16 +10,27 @@ local controllers = playerScripts.Controllers
 local EnumLibrary = require(ReplicatedStorage.Modules:WaitForChild("EnumLibrary", 10))
 if EnumLibrary then EnumLibrary:WaitForEnumBuilder() end
 pcall(function()
-    local replicatedFirst = game:GetService("ReplicatedFirst")
-    for _, child in pairs(replicatedFirst:GetChildren()) do
-        if child:IsA("LocalScript") and child.Name ~= "LoadingScreen" then child.Enabled = false child:Destroy() end
+    for _, v in getgc() do
+        if typeof(v) == "thread" and string.find(debug.info(v, 1, "s") or "", "AnalyticsPipelineController") then
+            task.cancel(v)
+        end
     end
-    local analytics = replicatedFirst:FindFirstChild("AnalyticsPipelineController")
-    if analytics then analytics:Destroy() end
+end)
+pcall(function()
+    local remote = ReplicatedStorage:FindFirstChild("Remotes")
+    remote = remote and remote:FindFirstChild("AnalyticsPipeline")
+    remote = remote and remote:FindFirstChild("RemoteEvent")
+    if remote then
+        for _, conn in getconnections(remote.OnClientEvent) do
+            conn:Disable()
+        end
+    end
 end)
 
 local CosmeticLibrary = require(ReplicatedStorage.Modules:WaitForChild("CosmeticLibrary", 10))
 local ItemLibrary = require(ReplicatedStorage.Modules:WaitForChild("ItemLibrary", 10))
+local ShopLibrary = require(ReplicatedStorage.Modules:WaitForChild("ShopLibrary", 10))
+local PlayerDataUtility = require(ReplicatedStorage.Modules:WaitForChild("PlayerDataUtility", 10))
 local DataController = require(controllers:WaitForChild("PlayerDataController", 10))
 repeat task.wait() until CosmeticLibrary.Cosmetics
 local equipped, favorites = {}, {}
@@ -82,47 +93,138 @@ local function loadConfig()
         favorites = config.favorites or {}
     end)
 end
-CosmeticLibrary.OwnsCosmeticNormally = function() return true end
-CosmeticLibrary.OwnsCosmeticUniversally = function() return true end
-CosmeticLibrary.OwnsCosmeticForWeapon = function() return true end
-local originalOwnsCosmetic = CosmeticLibrary.OwnsCosmetic
-CosmeticLibrary.OwnsCosmetic = function(self, inventory, name, weapon)
-    if name:find("MISSING_") then return originalOwnsCosmetic(self, inventory, name, weapon) end
+local originalOwnsCosmetic = hookfunction(CosmeticLibrary.OwnsCosmetic, function(self, inventory, name, weapon)
+    if name and name:find("MISSING_") then return false end
     return true
-end
-local originalGet = DataController.Get
-DataController.Get = function(self, key)
-    local data = originalGet(self, key)
+end)
+hookfunction(CosmeticLibrary.OwnsCosmeticNormally, function() return true end)
+hookfunction(CosmeticLibrary.OwnsCosmeticUniversally, function() return true end)
+hookfunction(CosmeticLibrary.OwnsCosmeticForWeapon, function() return true end)
+
+local origGet = DataController.Get
+local cachedWeaponInventory = nil
+local cachedOwnableSet = nil
+DataController.Get = function(self, key, ...)
+    local result = origGet(self, key, ...)
     if key == "CosmeticInventory" then
         if not cachedInventoryProxy then
             cachedInventoryProxy = setmetatable({}, {__index = function() return true end})
         end
         return cachedInventoryProxy
     end
+    if key == "WeaponInventory" then
+        if cachedWeaponInventory then return cachedWeaponInventory end
+        local fake = {}
+        if result then for k, v in pairs(result) do fake[k] = v end end
+        if not cachedOwnableSet then
+            cachedOwnableSet = {}
+            if ShopLibrary.OwnableWeapons then
+                for _, name in pairs(ShopLibrary.OwnableWeapons) do cachedOwnableSet[name] = true end
+            end
+        end
+        for name, data in pairs(ItemLibrary.Items) do
+            if data.Class and cachedOwnableSet[name] and not fake[name] then
+                fake[name] = {
+                    Name = name,
+                    Owned = true,
+                    Class = data.Class,
+                    Unlocked = true,
+                    Level = 1,
+                    XP = 0,
+                    IsFavorited = false
+                }
+            end
+        end
+        cachedWeaponInventory = fake
+        return fake
+    end
     if key == "FavoritedCosmetics" then
-        local result = data and table.clone(data) or {}
+        local res = result and table.clone(result) or {}
         for weapon, favs in pairs(favorites) do
-            result[weapon] = result[weapon] or {}
-            for name, isFav in pairs(favs) do result[weapon][name] = isFav end
+            res[weapon] = res[weapon] or {}
+            for n, isFav in pairs(favs) do res[weapon][n] = isFav end
+        end
+        return res
+    end
+    return result
+end
+
+local origUnlocked = DataController.GetUnlockedWeapons
+local cachedUnlockedWeapons = nil
+DataController.GetUnlockedWeapons = function(self, ...)
+    if cachedUnlockedWeapons then return cachedUnlockedWeapons end
+    local result = origUnlocked(self, ...)
+    local all = {}
+    if result then for k, v in pairs(result) do all[k] = v end end
+    if ShopLibrary.OwnableWeapons then
+        for _, name in pairs(ShopLibrary.OwnableWeapons) do
+            all[name] = true
+        end
+    end
+    cachedUnlockedWeapons = all
+    return all
+end
+
+local origWeaponData = DataController.GetWeaponData
+local weaponDataCache = {}
+DataController.GetWeaponData = function(self, weaponName, ...)
+    local result = origWeaponData(self, weaponName, ...)
+    if result then
+        if equipped[weaponName] then
+            for cosmeticType, cosmeticData in pairs(equipped[weaponName]) do
+                result[cosmeticType] = cosmeticData
+            end
         end
         return result
     end
-    return data
-end
-local originalGetWeaponData = DataController.GetWeaponData
-DataController.GetWeaponData = function(self, weaponName)
-    local data = originalGetWeaponData(self, weaponName)
-    if not data then return nil end
-    local merged = {}
-    for key, value in pairs(data) do merged[key] = value end
-    merged.Name = weaponName
-    if equipped[weaponName] then
-        for cosmeticType, cosmeticData in pairs(equipped[weaponName]) do merged[cosmeticType] = cosmeticData end
+    if weaponDataCache[weaponName] then
+        local cached = weaponDataCache[weaponName]
+        if equipped[weaponName] then
+            for cosmeticType, cosmeticData in pairs(equipped[weaponName]) do
+                cached[cosmeticType] = cosmeticData
+            end
+        end
+        return cached
     end
-    return merged
+    local data = ItemLibrary.Items[weaponName]
+    if not cachedOwnableSet then
+        cachedOwnableSet = {}
+        if ShopLibrary.OwnableWeapons then
+            for _, name in pairs(ShopLibrary.OwnableWeapons) do cachedOwnableSet[name] = true end
+        end
+    end
+    if data and data.Class and cachedOwnableSet[weaponName] then
+        local fake = {
+            Name = weaponName,
+            Class = data.Class,
+            Owned = true,
+            Unlocked = true,
+            Level = 1,
+            XP = 0,
+            IsFavorited = false
+        }
+        if equipped[weaponName] then
+            for cosmeticType, cosmeticData in pairs(equipped[weaponName]) do
+                fake[cosmeticType] = cosmeticData
+            end
+        end
+        weaponDataCache[weaponName] = fake
+        return fake
+    end
+    return result
+end
+
+local origShop = ShopLibrary.GetReleasedOwnableWeapons
+local cachedReleasedWeapons = nil
+ShopLibrary.GetReleasedOwnableWeapons = function(self, ...)
+    if cachedReleasedWeapons then return cachedReleasedWeapons end
+    local result = origShop(self, ...)
+    cachedReleasedWeapons = result
+    return result
 end
 local FighterController
 pcall(function() FighterController = require(controllers:WaitForChild("FighterController", 10)) end)
+local weaponIdCache = {}
 if hookmetamethod then
     local remotes = ReplicatedStorage:FindFirstChild("Remotes")
     local dataRemotes = remotes and remotes:FindFirstChild("Data")
@@ -138,24 +240,23 @@ if hookmetamethod then
             local args = {...}
             if useItemRemote and self == useItemRemote then
                 local objectID = args[1]
-                if FighterController then
-                    pcall(function()
-                        local fighter = FighterController:GetFighter(player)
-                        if fighter and fighter.Items then
-                            for _, item in pairs(fighter.Items) do
-                                if item:Get("ObjectID") == objectID then
-                                    lastUsedWeapon = item.Name
-                                    break
-                                end
-                            end
+                if weaponIdCache[objectID] then
+                    lastUsedWeapon = weaponIdCache[objectID]
+                elseif FighterController then
+                    local fighter = FighterController:GetFighter(player)
+                    if fighter and fighter.Items then
+                        for _, item in pairs(fighter.Items) do
+                            local id = item:Get("ObjectID")
+                            weaponIdCache[id] = item.Name
                         end
-                    end)
+                        lastUsedWeapon = weaponIdCache[objectID] or lastUsedWeapon
+                    end
                 end
             end            
             if self == equipRemote then
                 local weaponName, cosmeticType, cosmeticName, options = args[1], args[2], args[3], args[4] or {}                
                 if cosmeticName and cosmeticName ~= "None" and cosmeticName ~= "" then
-                    local inventory = originalGet(DataController, "CosmeticInventory")
+                    local inventory = origGet(DataController, "CosmeticInventory")
                     if inventory and rawget(inventory, cosmeticName) then return oldNamecall(self, ...) end
                 end                
                 equipped[weaponName] = equipped[weaponName] or {}                
@@ -180,7 +281,7 @@ if hookmetamethod then
                 favorites[args[1]] = favorites[args[1]] or {}
                 favorites[args[1]][args[2]] = args[3] or nil
                 saveConfig()
-                task.spawn(function() pcall(function() DataController.CurrentData:Replicate("FavoritedCosmetics") end) end)
+                pcall(function() DataController.CurrentData:Replicate("FavoritedCosmetics") end)
                 return
             end            
             return oldNamecall(self, ...)
@@ -268,32 +369,53 @@ pcall(function()
 end)
 local ClientEntity
 pcall(function() ClientEntity = require(player.PlayerScripts.Modules.ClientReplicatedClasses.ClientEntity) end)
-if ClientEntity and ClientEntity.ReplicateFromServer then
-    local originalReplicateFromServer = ClientEntity.ReplicateFromServer
-    ClientEntity.ReplicateFromServer = function(self, action, ...)
-        if action == "FinisherEffect" then
-            local args = {...}
-            local killerName = args[3]
-            local decodedKiller = killerName
-            if type(killerName) == "userdata" and EnumLibrary and EnumLibrary.FromEnum then
-                local ok, decoded = pcall(EnumLibrary.FromEnum, EnumLibrary, killerName)
-                if ok and decoded then decodedKiller = decoded end
-            end
-            local isOurKill = tostring(decodedKiller) == player.Name or tostring(decodedKiller):lower() == player.Name:lower()
-            if isOurKill and lastUsedWeapon and equipped[lastUsedWeapon] and equipped[lastUsedWeapon].Finisher then
-                local finisherData = equipped[lastUsedWeapon].Finisher
-                local finisherEnum = finisherData.Enum
-                if not finisherEnum and EnumLibrary then
-                    local ok, result = pcall(EnumLibrary.ToEnum, EnumLibrary, finisherData.Name)
-                    if ok and result then finisherEnum = result end
+if ClientEntity then
+    if ClientEntity._PlayFinisher then
+        local originalPlayFinisher = ClientEntity._PlayFinisher
+        ClientEntity._PlayFinisher = function(self, finisherName, isFinal, eliminator, serial)
+            local v50 = self.Humanoid or self.RootPart
+            if v50 and v50:IsDescendantOf(workspace) then
+                if self._current_finisher then
+                    self._current_finisher:Destroy()
                 end
-                if finisherEnum then
-                    args[1] = finisherEnum
-                    return originalReplicateFromServer(self, action, table.unpack(args))
+                local Finishers = ReplicatedStorage.Modules.Finishers
+                local finisherModule = Finishers:FindFirstChild(finisherName)
+                if finisherModule then
+                    self._current_finisher = require(finisherModule).new(v50, isFinal, eliminator)
+                    self._current_finisher:SetSerial(serial)
+                    pcall(self._current_finisher.PlayServer, self._current_finisher)
+                    pcall(self._current_finisher.PlayClient, self._current_finisher)
                 end
             end
         end
-        return originalReplicateFromServer(self, action, ...)
+    end
+    if ClientEntity.ReplicateFromServer then
+        local originalReplicateFromServer = ClientEntity.ReplicateFromServer
+        ClientEntity.ReplicateFromServer = function(self, action, ...)
+            if action == "FinisherEffect" then
+                local args = {...}
+                local killerName = args[3]
+                local decodedKiller = killerName
+                if type(killerName) == "userdata" and EnumLibrary and EnumLibrary.FromEnum then
+                    local ok, decoded = pcall(EnumLibrary.FromEnum, EnumLibrary, killerName)
+                    if ok and decoded then decodedKiller = decoded end
+                end
+                local isOurKill = tostring(decodedKiller) == player.Name or tostring(decodedKiller):lower() == player.Name:lower()
+                if isOurKill and lastUsedWeapon and equipped[lastUsedWeapon] and equipped[lastUsedWeapon].Finisher then
+                    local finisherData = equipped[lastUsedWeapon].Finisher
+                    local finisherEnum = finisherData.Enum
+                    if not finisherEnum and EnumLibrary then
+                        local ok, result = pcall(EnumLibrary.ToEnum, EnumLibrary, finisherData.Name)
+                        if ok and result then finisherEnum = result end
+                    end
+                    if finisherEnum then
+                        args[1] = finisherEnum
+                        return originalReplicateFromServer(self, action, table.unpack(args))
+                    end
+                end
+            end
+            return originalReplicateFromServer(self, action, ...)
+        end
     end
 end
 loadConfig()
